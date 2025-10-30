@@ -12,10 +12,11 @@ CORS(app)
 # ---------------------------
 def get_db_connection():
     return mysql.connector.connect(
-        host=os.getenv("MYSQLHOST"),
-        user=os.getenv("MYSQLUSER"),
-        password=os.getenv("MYSQLPASSWORD"),
-        database=os.getenv("MYSQL_DATABASE")
+        host=os.getenv("MYSQLHOST", "localhost"),
+        user=os.getenv("MYSQLUSER", "root"),
+        password=os.getenv("MYSQLPASSWORD", ""),
+        database=os.getenv("MYSQL_DATABASE", ""),
+        port=int(os.getenv("MYSQLPORT", 3306))  # ✅ Added explicit port support
     )
 
 # ---------------------------
@@ -29,12 +30,10 @@ def index():
     per_page = 16
     page = request.args.get('page', 1, type=int)
 
-    # Count total rows
     cursor.execute("SELECT COUNT(*) AS total FROM partner_events")
     total = cursor.fetchone()['total']
     total_pages = math.ceil(total / per_page)
 
-    # Fetch paginated events
     offset = (page - 1) * per_page
     cursor.execute(
         f"SELECT * FROM partner_events ORDER BY start_date DESC LIMIT {per_page} OFFSET {offset}"
@@ -42,7 +41,6 @@ def index():
     events = cursor.fetchall()
     conn.close()
 
-    # ✅ Improved pagination window logic (1–10, 11–20, etc.)
     window_size = 10
     start_page = ((page - 1) // window_size) * window_size + 1
     end_page = min(start_page + window_size - 1, total_pages)
@@ -57,24 +55,21 @@ def index():
     )
 
 # ---------------------------
-# ✅ Enhanced API Endpoint with Filters + Pagination
+# API Endpoint (Filters + Pagination)
 # ---------------------------
 @app.route('/api/events', methods=['GET'])
 def get_events():
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
-    # Pagination
     per_page = 16
     page = request.args.get('page', 1, type=int)
     offset = (page - 1) * per_page
 
-    # Filters
     q = request.args.get('q', '', type=str).strip()
     source = request.args.get('source', '', type=str).strip()
     category = request.args.get('category', '', type=str).strip()
 
-    # Build WHERE clause dynamically
     filters = []
     params = []
 
@@ -90,13 +85,11 @@ def get_events():
 
     where_clause = "WHERE " + " AND ".join(filters) if filters else ""
 
-    # Count total
     count_query = f"SELECT COUNT(*) AS total FROM partner_events {where_clause}"
     cursor.execute(count_query, tuple(params))
     total = cursor.fetchone()['total']
     total_pages = math.ceil(total / per_page)
 
-    # Fetch events
     query = f"""
         SELECT * FROM partner_events
         {where_clause}
@@ -107,7 +100,6 @@ def get_events():
     events = cursor.fetchall()
     conn.close()
 
-    # ✅ Add pagination window info to JSON (optional but useful for frontend)
     window_size = 10
     start_page = ((page - 1) // window_size) * window_size + 1
     end_page = min(start_page + window_size - 1, total_pages)
@@ -127,7 +119,8 @@ def get_events():
     })
 
 # ---------------------------
-# Run the App
+# Run the App (✅ For Railway)
 # ---------------------------
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))  # Railway assigns a port dynamically
+    app.run(host="0.0.0.0", port=port)
