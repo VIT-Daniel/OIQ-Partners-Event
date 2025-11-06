@@ -32,14 +32,23 @@ from html import unescape
 # ---------------------------
 # Database Configuration
 # ---------------------------
+# def get_db_connection():
+#   return mysql.connector.connect(
+#        host="localhost",        # or your DB host
+#        user="root",             # your MySQL username
+#        password="", # your MySQL password
+#        database="partner_events" # the DB name you created
+#    )
+
+
 def get_db_connection():
     return mysql.connector.connect(
-        host="localhost",        # or your DB host
-        user="root",             # your MySQL username
-        password="", # your MySQL password
-        database="partner_events" # the DB name you created
+        host=os.getenv("MYSQLHOST", "gondola.proxy.rlwy.net"),
+        user=os.getenv("MYSQLUSER", "root"),
+        password=os.getenv("MYSQLPASSWORD", "OJxEuDPJwSUJAwEwhrWYKnUODpYWzyMZ"),
+        database=os.getenv("MYSQL_DATABASE", "railway"),
+        port=int(os.getenv("MYSQLPORT", 53349))  # ✅ Added explicit port support
     )
-
 
 
 
@@ -335,5 +344,8 @@ def main():
 
 
 
+#if __name__ == "__main__":
+#    main()
+
 if __name__ == "__main__":
-    main()
+    main()  # or whatever your scraper’s entry function is
