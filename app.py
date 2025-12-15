@@ -12,11 +12,11 @@ CORS(app)
 # ---------------------------
 def get_db_connection():
     return mysql.connector.connect(
-        host=os.getenv("MYSQLHOST", "gondola.proxy.rlwy.net"),
+        host=os.getenv("MYSQLHOST", "switchback.proxy.rlwy.net"),
         user=os.getenv("MYSQLUSER", "root"),
-        password=os.getenv("MYSQLPASSWORD", "OJxEuDPJwSUJAwEwhrWYKnUODpYWzyMZ"),
+        password=os.getenv("MYSQLPASSWORD", "WuehwiRBNRspaqDphMfYRjpskRhwaqVV"),
         database=os.getenv("MYSQL_DATABASE", "railway"),
-        port=int(os.getenv("MYSQLPORT", 53349))  # ✅ Added explicit port support
+        port=int(os.getenv("MYSQLPORT", 46062))  # ✅ Added explicit port support
     )
 
 # ---------------------------
