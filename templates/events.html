@@ -7,12 +7,48 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
 
   <style>
+    body {
+      background-color: #f8f9fa;
+    }
+
+    /* 🌐 Header */
+    header {
+      background-color: #ffffff;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+      padding: 0.75rem 1.5rem;
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    header .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 600;
+      font-size: 1.25rem;
+      color: #0d6efd;
+      text-decoration: none;
+    }
+
+    header .brand img {
+      height: 40px;
+      width: 40px;
+      object-fit: contain;
+      border-radius: 8px;
+    }
+
     .card {
       height: 100%;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
       position: relative;
+      border: none;
+      border-radius: 10px;
     }
 
     .card-body {
@@ -45,12 +81,22 @@
   </style>
 </head>
 
-<body class="bg-light">
-  <div class="container py-4">
-    <h1 class="mb-4 text-center">Partner Events</h1>
+<body>
+  <!-- 🌐 Header -->
+  <header>
+    <a href="/" class="brand">
+      <!-- ✅ Updated to use your actual logo -->
+      <img src="{{ url_for('static', filename='image/vit.png') }}" alt="VIT Logo" />
+      <span>VIT Partner Events</span>
+    </a>
+  </header>
+
+  <!-- 💡 Main Container -->
+  <div class="container py-5">
+    <h1 class="mb-4 text-center fw-semibold">Discover Partner Events</h1>
 
     <!-- 🔍 Search + Filters -->
-    <div class="row mb-4">
+    <div class="row mb-4 g-2">
       <div class="col-md-4">
         <input type="text" id="search" class="form-control" placeholder="Search events..." />
       </div>
@@ -71,38 +117,31 @@
         </select>
       </div>
       <div class="col-md-2">
-        <button id="clearFilters" class="btn btn-secondary w-100">Clear</button>
+        <button id="clearFilters" class="btn btn-outline-secondary w-100">Clear</button>
       </div>
     </div>
 
-    <!-- Event Cards -->
+    <!-- 🎟️ Event Cards -->
     <div id="eventGrid" class="row g-4"></div>
 
-    <!-- Pagination -->
+    <!-- 📄 Pagination -->
     <nav aria-label="Page navigation" class="mt-5">
       <ul id="pagination" class="pagination justify-content-center"></ul>
     </nav>
   </div>
 
+  <!-- JS -->
   <script>
     const eventGrid = document.getElementById("eventGrid");
     const pagination = document.getElementById("pagination");
     let currentPage = 1;
-    let totalPages = 1;
 
-    // Fetch events dynamically
     async function fetchEvents(page = 1) {
       const q = document.getElementById("search").value.trim();
       const source = document.getElementById("sourceFilter").value;
       const category = document.getElementById("categoryFilter").value;
 
-      const params = new URLSearchParams({
-        page,
-        q,
-        source,
-        category,
-      });
-
+      const params = new URLSearchParams({ page, q, source, category });
       const response = await fetch(`/api/events?${params.toString()}`);
       const data = await response.json();
 
@@ -110,7 +149,6 @@
       renderPagination(data.start_page, data.end_page, data.page, data.total_pages);
     }
 
-    // Render event cards
     function renderEvents(events) {
       eventGrid.innerHTML = "";
 
@@ -151,13 +189,10 @@
       });
     }
 
-    // Render pagination buttons (1–10, Previous/Next)
     function renderPagination(startPage, endPage, currentPage, totalPages) {
       pagination.innerHTML = "";
-
       if (totalPages <= 1) return;
 
-      // Previous button
       const prevDisabled = currentPage === 1 ? "disabled" : "";
       pagination.insertAdjacentHTML(
         "beforeend",
@@ -166,7 +201,6 @@
         </li>`
       );
 
-      // Page numbers
       for (let i = startPage; i <= endPage; i++) {
         const active = i === currentPage ? "active" : "";
         pagination.insertAdjacentHTML(
@@ -177,7 +211,6 @@
         );
       }
 
-      // Next button
       const nextDisabled = currentPage === totalPages ? "disabled" : "";
       pagination.insertAdjacentHTML(
         "beforeend",
@@ -186,7 +219,6 @@
         </li>`
       );
 
-      // Add event listeners
       document.querySelectorAll(".page-link").forEach((btn) => {
         btn.addEventListener("click", (e) => {
           e.preventDefault();
@@ -199,7 +231,6 @@
       });
     }
 
-    // Filters + Search
     document.getElementById("search").addEventListener("input", () => fetchEvents(1));
     document.getElementById("sourceFilter").addEventListener("change", () => fetchEvents(1));
     document.getElementById("categoryFilter").addEventListener("change", () => fetchEvents(1));
@@ -210,7 +241,6 @@
       fetchEvents(1);
     });
 
-    // Initial load
     fetchEvents();
   </script>
 </body>
