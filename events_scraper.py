@@ -12,16 +12,16 @@ Features:
 ✅ Source identifiers
 ✅ HTML-cleaned descriptions
 ✅ Unified CSV export
-✅ Optional DB support (commented)
-
-Final script
-Last updated: 2025-10-29
-Last updated: 2025-10-30
+✅ DB support
+✅ ONLY keeps events with valid registration links (http/https)
 
 """
+
 import os
 import mysql.connector
 from mysql.connector import Error
+from dotenv import load_dotenv
+
 import json
 import re
 import requests
@@ -31,35 +31,57 @@ from html import unescape
 
 
 # ---------------------------
-# Database Configuration
+# ENV LOADING (keep your behavior)
 # ---------------------------
-# def get_db_connection():
-#   return mysql.connector.connect(
-#        host="localhost",        # or your DB host
-#        user="root",             # your MySQL username
-#        password="", # your MySQL password
-#        database="partner_events" # the DB name you created
-#    )
+if os.getenv("APP_ENV") != "prod":
+    load_dotenv(".env.dev", override=True)  # dev values win locally
+else:
+    load_dotenv()  # in case you ever run prod locally (optional)
+
+# Optional debug (safe)
+print("APP_ENV =", os.getenv("APP_ENV"))
+print("MYSQLHOST =", os.getenv("MYSQLHOST"))
+print("MYSQLPORT =", os.getenv("MYSQLPORT"))
 
 
-# def get_db_connection():
-#     return mysql.connector.connect(
-#         host=os.getenv("MYSQLHOST", "gondola.proxy.rlwy.net"),
-#         user=os.getenv("MYSQLUSER", "root"),
-#         password=os.getenv("MYSQLPASSWORD", "OJxEuDPJwSUJAwEwhrWYKnUODpYWzyMZ"),
-#         database=os.getenv("MYSQL_DATABASE", "railway"),
-#         port=int(os.getenv("MYSQLPORT", 53349))  # ✅ Added explicit port support
-#     )
+# ---------------------------
+# URL Helper (NEW)
+# ---------------------------
+def has_valid_url(url: str) -> bool:
+    """Only accept real http/https URLs."""
+    if not url:
+        return False
+    url = str(url).strip()
+    return url.startswith("http://") or url.startswith("https://")
 
-#NEW DB CONNECTION 
 
+# ---------------------------
+# Database Configuration (UNCHANGED)
+# ---------------------------
 def get_db_connection():
+    host = os.getenv("MYSQLHOST")
+    user = os.getenv("MYSQLUSER")
+    password = os.getenv("MYSQLPASSWORD")  # may be empty string
+    database = os.getenv("MYSQL_DATABASE") or os.getenv("MYSQLDATABASE")
+    port = os.getenv("MYSQLPORT")
+
+    # Password can be empty, others cannot
+    missing = [k for k, v in {
+        "MYSQLHOST": host,
+        "MYSQLUSER": user,
+        "MYSQL_DATABASE or MYSQLDATABASE": database,
+        "MYSQLPORT": port,
+    }.items() if not v]
+
+    if missing:
+        raise RuntimeError(f"Missing env vars: {', '.join(missing)}")
+
     return mysql.connector.connect(
-        host=os.getenv("MYSQLHOST", "switchback.proxy.rlwy.net"),
-        user=os.getenv("MYSQLUSER", "root"),
-        password=os.getenv("MYSQLPASSWORD", "WuehwiRBNRspaqDphMfYRjpskRhwaqVV"),
-        database=os.getenv("MYSQL_DATABASE", "railway"),
-        port=int(os.getenv("MYSQLPORT", 46062))  # ✅ Added explicit port support
+        host=host,
+        user=user,
+        password=password or "",  # empty password allowed
+        database=database,
+        port=int(port),
     )
 
 
@@ -87,7 +109,7 @@ def fetch_json(url: str) -> dict:
 
 
 # ---------------------------
-# UiPath Parser
+# UiPath Parser (UPDATED: keep only valid register_link)
 # ---------------------------
 def parse_uipath(json_data: dict) -> list:
     webinars = []
@@ -113,10 +135,8 @@ def parse_uipath(json_data: dict) -> list:
         return []
 
     for item in data:
-        # Try to get a category; default to 'Webinar'
         category = item.get("category") or "Webinar"
 
-        # --- Fix malformed register_link ---
         slug = item.get("slug")
         if slug:
             if slug.startswith("http"):
@@ -125,6 +145,10 @@ def parse_uipath(json_data: dict) -> list:
                 register_link = f"https://www.uipath.com{slug}"
         else:
             register_link = None
+
+        # ✅ Filter: must have valid URL
+        if not has_valid_url(register_link):
+            continue
 
         webinars.append({
             "source": "UiPath",
@@ -137,13 +161,12 @@ def parse_uipath(json_data: dict) -> list:
             "category": category
         })
 
-    print(f"✅ Found {len(webinars)} UiPath events.")
+    print(f"✅ Found {len(webinars)} UiPath events (with valid URL).")
     return webinars
 
 
-
 # ---------------------------
-# NVIDIA Parser
+# NVIDIA Parser (UPDATED: keep only valid register_link)
 # ---------------------------
 def parse_nvidia(json_data: dict) -> list:
     events = []
@@ -154,8 +177,12 @@ def parse_nvidia(json_data: dict) -> list:
         return []
 
     for item in data:
-        # Use 'type' as category; default to 'Conference'
         category = item.get("type") or "Conference"
+        register_link = item.get("url")
+
+        # ✅ Filter: must have valid URL
+        if not has_valid_url(register_link):
+            continue
 
         events.append({
             "source": "NVIDIA",
@@ -164,16 +191,16 @@ def parse_nvidia(json_data: dict) -> list:
             "start_date": item.get("startDate"),
             "end_date": item.get("endDate"),
             "location": item.get("location") or item.get("venue"),
-            "register_link": item.get("url"),
+            "register_link": register_link,
             "category": category
         })
 
-    print(f"✅ Found {len(events)} NVIDIA events.")
+    print(f"✅ Found {len(events)} NVIDIA events (with valid URL).")
     return events
 
 
 # ---------------------------
-# AWS Parser
+# AWS Parser (UPDATED: keep only valid register_link)
 # ---------------------------
 def parse_aws(json_data: dict) -> list:
     events = []
@@ -186,8 +213,12 @@ def parse_aws(json_data: dict) -> list:
         item = i.get("item", {})
         fields = item.get("additionalFields", {})
 
-        # Default category to 'Webinar' if not specified
         category = fields.get("eventType") or "Webinar"
+        register_link = fields.get("ctaLink") or fields.get("primaryCTALink")
+
+        # ✅ Filter: must have valid URL
+        if not has_valid_url(register_link):
+            continue
 
         events.append({
             "source": "AWS",
@@ -196,13 +227,12 @@ def parse_aws(json_data: dict) -> list:
             "start_date": item.get("dateCreated"),
             "end_date": item.get("dateUpdated"),
             "location": None,
-            "register_link": fields.get("ctaLink") or fields.get("primaryCTALink"),
+            "register_link": register_link,
             "category": category
         })
 
-    print(f"✅ Found {len(events)} AWS events.")
+    print(f"✅ Found {len(events)} AWS events (with valid URL).")
     return events
-
 
 
 # ---------------------------
@@ -235,19 +265,17 @@ def save_to_csv(events: list, base_filename: str):
     print(f"💾 Saved {len(df)} records → {filename}")
 
 
-#-----------------
-# Db 
-#----------------
-
+# ---------------------------
+# Save to DB
+# ---------------------------
 def save_to_db(events: list):
     if not events:
         print("⚠️ No data to save to DB")
-        return 0  # return 0 inserted
+        return 0
 
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # Count before inserting
     cursor.execute("SELECT COUNT(*) FROM partner_events")
     before_count = cursor.fetchone()[0]
 
@@ -271,7 +299,6 @@ def save_to_db(events: list):
 
     conn.commit()
 
-    # Count after inserting
     cursor.execute("SELECT COUNT(*) FROM partner_events")
     after_count = cursor.fetchone()[0]
 
@@ -283,8 +310,7 @@ def save_to_db(events: list):
     print(f"🗄️ {inserted_count} new events inserted into DB (duplicates ignored).")
     return inserted_count
 
-    
-    
+
 # ---------------------------
 # Logging
 # ---------------------------
@@ -292,9 +318,9 @@ def write_log(log_data: dict):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = [
         f"\n===== Run Log - {timestamp} =====",
-        f"AWS Events: {log_data.get('aws', 0)}",
-        f"NVIDIA Events: {log_data.get('nvidia', 0)}",
-        f"UiPath Events: {log_data.get('uipath', 0)}",
+        f"AWS Events (valid URL): {log_data.get('aws', 0)}",
+        f"NVIDIA Events (valid URL): {log_data.get('nvidia', 0)}",
+        f"UiPath Events (valid URL): {log_data.get('uipath', 0)}",
         f"Total (after duplicates): {log_data.get('total', 0)}",
         f"🆕 Newly inserted to DB: {log_data.get('inserted_total', 0)}",
         "==============================="
@@ -302,14 +328,12 @@ def write_log(log_data: dict):
     with open("scraper_log.txt", "a", encoding="utf-8") as log_file:
         log_file.write("\n".join(log_entry) + "\n")
     print("🪵 Log updated → scraper_log.txt")
-    
-    
+
 
 # ---------------------------
 # MAIN SCRIPT
 # ---------------------------
 def main():
-    # Define URLs
     uipath_url = "https://www.uipath.com/steam-resources/page-data/resources/automation-webinars/page-data.json"
     nvidia_url = "https://www.nvidia.com/content/dam/en-zz/Solutions/about-nvidia/calendar/en-us.json"
     aws_url = "https://aws.amazon.com/api/dirs/items/search?item.directoryId=alias%23events-webinars-interactive-cards&item.locale=en_US&tags.id=%21GLOBAL%23local-tags-events-master-series%23third-party&tags.id=%21GLOBAL%23local-tags-series%23third-party&tags.id=%21GLOBAL%23local-tags-flag%23archived&sort_by=item.dateCreated&sort_order=desc&size=8"
@@ -317,46 +341,29 @@ def main():
     all_events = []
     log_counts = {}
 
-    # --- UiPath ---
-    uipath_json = fetch_json(uipath_url)
-    uipath_events = parse_uipath(uipath_json)
+    uipath_events = parse_uipath(fetch_json(uipath_url))
     log_counts["uipath"] = len(uipath_events)
     all_events.extend(uipath_events)
 
-    # --- NVIDIA ---
-    nvidia_json = fetch_json(nvidia_url)
-    nvidia_events = parse_nvidia(nvidia_json)
+    nvidia_events = parse_nvidia(fetch_json(nvidia_url))
     log_counts["nvidia"] = len(nvidia_events)
     all_events.extend(nvidia_events)
 
-    # --- AWS ---
-    aws_json = fetch_json(aws_url)
-    aws_events = parse_aws(aws_json)
+    aws_events = parse_aws(fetch_json(aws_url))
     log_counts["aws"] = len(aws_events)
     all_events.extend(aws_events)
 
-    # --- Remove duplicates ---
     all_events = remove_duplicates(all_events)
     log_counts["total"] = len(all_events)
 
-    # --- Save ---
     save_to_csv(all_events, "all_partner_events")
-    
-    # --- Save to database ---
-    save_to_db(all_events)
-    
+
+    # ✅ FIX: Save to DB ONCE (you had it twice)
     inserted_total = save_to_db(all_events)
     log_counts["inserted_total"] = inserted_total
 
-
-    # --- Log summary ---
     write_log(log_counts)
 
 
-
-
-#if __name__ == "__main__":
-#    main()
-
 if __name__ == "__main__":
-    main()  # or whatever your scraper’s entry function is
+    main()
