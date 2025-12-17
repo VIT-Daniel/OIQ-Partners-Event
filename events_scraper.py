@@ -14,6 +14,7 @@ Features:
 ✅ Unified CSV export
 ✅ DB support
 ✅ ONLY keeps events with valid registration links (http/https)
+✅ Normalizes dates for MySQL (fixes ISO timezone dates)
 """
 
 import os
@@ -21,13 +22,12 @@ import mysql.connector
 import re
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone
 from html import unescape
 
 # ---------------------------
 # ENV LOADING (Railway-safe)
 # ---------------------------
-# Railway should set APP_ENV=prod and inject DB vars via Variables
 if os.getenv("APP_ENV") != "prod":
     from dotenv import load_dotenv
     load_dotenv(".env.dev", override=True)  # dev values win locally
@@ -41,6 +41,52 @@ def has_valid_url(url: str) -> bool:
         return False
     url = str(url).strip()
     return url.startswith("http://") or url.startswith("https://")
+
+# ---------------------------
+# Datetime Helper (NEW)
+# ---------------------------
+def to_mysql_datetime(value):
+    """
+    Converts common date formats (including ISO8601 with timezone offsets)
+    into a MySQL-friendly 'YYYY-MM-DD HH:MM:SS' string.
+    Returns None if empty/unparseable.
+    """
+    if value is None:
+        return None
+
+    s = str(value).strip()
+    if not s:
+        return None
+
+    # Normalize Zulu time
+    s = s.replace("Z", "+00:00")
+
+    # Try ISO8601 (handles +02:00 offsets)
+    try:
+        # Example: 2022-03-15T00:00+02:00
+        dt = datetime.fromisoformat(s)
+
+        # If timezone-aware, convert to UTC and strip tzinfo
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pass
+
+    # Date-only like 2025-12-17
+    if len(s) == 10 and s[4] == "-" and s[7] == "-":
+        return f"{s} 00:00:00"
+
+    # Fallback formats
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+
+    return None
 
 # ---------------------------
 # Database Configuration (UNCHANGED)
@@ -93,7 +139,7 @@ def fetch_json(url: str) -> dict:
     return response.json()
 
 # ---------------------------
-# UiPath Parser (keep only valid register_link)
+# UiPath Parser (valid register_link only)
 # ---------------------------
 def parse_uipath(json_data: dict) -> list:
     webinars = []
@@ -130,7 +176,6 @@ def parse_uipath(json_data: dict) -> list:
         else:
             register_link = None
 
-        # ✅ Filter: must have valid URL
         if not has_valid_url(register_link):
             continue
 
@@ -149,7 +194,7 @@ def parse_uipath(json_data: dict) -> list:
     return webinars
 
 # ---------------------------
-# NVIDIA Parser (keep only valid register_link)
+# NVIDIA Parser (valid register_link only)
 # ---------------------------
 def parse_nvidia(json_data: dict) -> list:
     events = []
@@ -163,7 +208,6 @@ def parse_nvidia(json_data: dict) -> list:
         category = item.get("type") or "Conference"
         register_link = item.get("url")
 
-        # ✅ Filter: must have valid URL
         if not has_valid_url(register_link):
             continue
 
@@ -182,7 +226,7 @@ def parse_nvidia(json_data: dict) -> list:
     return events
 
 # ---------------------------
-# AWS Parser (keep only valid register_link)
+# AWS Parser (valid register_link only)
 # ---------------------------
 def parse_aws(json_data: dict) -> list:
     events = []
@@ -199,7 +243,6 @@ def parse_aws(json_data: dict) -> list:
         category = fields.get("eventType") or "Webinar"
         register_link = fields.get("ctaLink") or fields.get("primaryCTALink")
 
-        # ✅ Filter: must have valid URL
         if not has_valid_url(register_link):
             continue
 
@@ -280,8 +323,8 @@ def save_to_db(events: list) -> int:
             e.get("category"),
             e.get("title"),
             e.get("description"),
-            e.get("start_date"),
-            e.get("end_date"),
+            to_mysql_datetime(e.get("start_date")),
+            to_mysql_datetime(e.get("end_date")),
             e.get("location"),
             e.get("register_link"),
         ))
