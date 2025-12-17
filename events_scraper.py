@@ -14,38 +14,26 @@ Features:
 ✅ Unified CSV export
 ✅ DB support
 ✅ ONLY keeps events with valid registration links (http/https)
-
 """
 
 import os
 import mysql.connector
-from mysql.connector import Error
-from dotenv import load_dotenv
-
-import json
 import re
 import requests
 import pandas as pd
 from datetime import datetime
 from html import unescape
 
-
 # ---------------------------
-# ENV LOADING (keep your behavior)
+# ENV LOADING (Railway-safe)
 # ---------------------------
+# Railway should set APP_ENV=prod and inject DB vars via Variables
 if os.getenv("APP_ENV") != "prod":
+    from dotenv import load_dotenv
     load_dotenv(".env.dev", override=True)  # dev values win locally
-else:
-    load_dotenv()  # in case you ever run prod locally (optional)
-
-# Optional debug (safe)
-print("APP_ENV =", os.getenv("APP_ENV"))
-print("MYSQLHOST =", os.getenv("MYSQLHOST"))
-print("MYSQLPORT =", os.getenv("MYSQLPORT"))
-
 
 # ---------------------------
-# URL Helper (NEW)
+# URL Helper
 # ---------------------------
 def has_valid_url(url: str) -> bool:
     """Only accept real http/https URLs."""
@@ -53,7 +41,6 @@ def has_valid_url(url: str) -> bool:
         return False
     url = str(url).strip()
     return url.startswith("http://") or url.startswith("https://")
-
 
 # ---------------------------
 # Database Configuration (UNCHANGED)
@@ -84,7 +71,6 @@ def get_db_connection():
         port=int(port),
     )
 
-
 # ---------------------------
 # Helper: Clean HTML
 # ---------------------------
@@ -97,7 +83,6 @@ def clean_html(raw_html: str) -> str:
     clean_text = re.sub(r"\s+", " ", clean_text).strip()  # normalize spaces
     return clean_text
 
-
 # ---------------------------
 # Generic JSON fetcher
 # ---------------------------
@@ -107,9 +92,8 @@ def fetch_json(url: str) -> dict:
     response.raise_for_status()
     return response.json()
 
-
 # ---------------------------
-# UiPath Parser (UPDATED: keep only valid register_link)
+# UiPath Parser (keep only valid register_link)
 # ---------------------------
 def parse_uipath(json_data: dict) -> list:
     webinars = []
@@ -139,7 +123,7 @@ def parse_uipath(json_data: dict) -> list:
 
         slug = item.get("slug")
         if slug:
-            if slug.startswith("http"):
+            if str(slug).startswith("http"):
                 register_link = slug
             else:
                 register_link = f"https://www.uipath.com{slug}"
@@ -164,14 +148,13 @@ def parse_uipath(json_data: dict) -> list:
     print(f"✅ Found {len(webinars)} UiPath events (with valid URL).")
     return webinars
 
-
 # ---------------------------
-# NVIDIA Parser (UPDATED: keep only valid register_link)
+# NVIDIA Parser (keep only valid register_link)
 # ---------------------------
 def parse_nvidia(json_data: dict) -> list:
     events = []
-
     data = json_data.get("events", []) if isinstance(json_data, dict) else json_data
+
     if not data:
         print("⚠️ No NVIDIA 'events' found.")
         return []
@@ -198,13 +181,13 @@ def parse_nvidia(json_data: dict) -> list:
     print(f"✅ Found {len(events)} NVIDIA events (with valid URL).")
     return events
 
-
 # ---------------------------
-# AWS Parser (UPDATED: keep only valid register_link)
+# AWS Parser (keep only valid register_link)
 # ---------------------------
 def parse_aws(json_data: dict) -> list:
     events = []
     items = json_data.get("items", [])
+
     if not items:
         print("⚠️ No AWS 'items' found.")
         return []
@@ -234,7 +217,6 @@ def parse_aws(json_data: dict) -> list:
     print(f"✅ Found {len(events)} AWS events (with valid URL).")
     return events
 
-
 # ---------------------------
 # Remove Duplicates
 # ---------------------------
@@ -247,7 +229,6 @@ def remove_duplicates(events: list) -> list:
     if removed > 0:
         print(f"🧹 Removed {removed} duplicate records.")
     return df.to_dict(orient="records")
-
 
 # ---------------------------
 # Save to CSV
@@ -264,11 +245,10 @@ def save_to_csv(events: list, base_filename: str):
     df.to_csv(filename, index=False, encoding="utf-8-sig")
     print(f"💾 Saved {len(df)} records → {filename}")
 
-
 # ---------------------------
 # Save to DB
 # ---------------------------
-def save_to_db(events: list):
+def save_to_db(events: list) -> int:
     if not events:
         print("⚠️ No data to save to DB")
         return 0
@@ -284,16 +264,15 @@ def save_to_db(events: list):
     (source, category, title, description, start_date, end_date, location, register_link)
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
     ON DUPLICATE KEY UPDATE
-    category = VALUES(category),
-    title = VALUES(title),
-    description = VALUES(description),
-    start_date = VALUES(start_date),
-    end_date = VALUES(end_date),
-    location = VALUES(location),
-    register_link = VALUES(register_link),
-    updated_at = CURRENT_TIMESTAMP
+      category = VALUES(category),
+      title = VALUES(title),
+      description = VALUES(description),
+      start_date = VALUES(start_date),
+      end_date = VALUES(end_date),
+      location = VALUES(location),
+      register_link = VALUES(register_link),
+      updated_at = CURRENT_TIMESTAMP
     """
-
 
     for e in events:
         cursor.execute(insert_query, (
@@ -317,9 +296,8 @@ def save_to_db(events: list):
     cursor.close()
     conn.close()
 
-    print(f"🗄️ {inserted_count} new events inserted into DB (duplicates ignored).")
+    print(f"🗄️ {inserted_count} new rows inserted (existing rows may have been updated).")
     return inserted_count
-
 
 # ---------------------------
 # Logging
@@ -338,7 +316,6 @@ def write_log(log_data: dict):
     with open("scraper_log.txt", "a", encoding="utf-8") as log_file:
         log_file.write("\n".join(log_entry) + "\n")
     print("🪵 Log updated → scraper_log.txt")
-
 
 # ---------------------------
 # MAIN SCRIPT
@@ -368,12 +345,10 @@ def main():
 
     save_to_csv(all_events, "all_partner_events")
 
-    # ✅ FIX: Save to DB ONCE (you had it twice)
     inserted_total = save_to_db(all_events)
     log_counts["inserted_total"] = inserted_total
 
     write_log(log_counts)
-
 
 if __name__ == "__main__":
     main()
