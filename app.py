@@ -3,28 +3,12 @@ from flask_cors import CORS
 import math
 import mysql.connector
 import os
-from dotenv import load_dotenv
 
+# ✅ Load .env.dev ONLY in local dev
+# Railway should use Variables, and APP_ENV should be "prod"
 if os.getenv("APP_ENV") != "prod":
+    from dotenv import load_dotenv
     load_dotenv(".env.dev", override=True)
-else:
-    load_dotenv()
-
-
-
-
-
-
-
-# ---------------------------
-# Load .env file (local dev)
-# ---------------------------
-load_dotenv()
-
-print("APP_ENV =", os.getenv("APP_ENV"))
-print("MYSQLHOST =", os.getenv("MYSQLHOST"))
-print("MYSQLPORT =", os.getenv("MYSQLPORT"))
-
 
 app = Flask(__name__)
 
@@ -38,8 +22,6 @@ CORS(app)
 # ---------------------------
 # Database Connection
 # ---------------------------
-from urllib.parse import urlparse
-
 def get_db_connection():
     host = os.getenv("MYSQLHOST")
     user = os.getenv("MYSQLUSER")
@@ -66,10 +48,6 @@ def get_db_connection():
         port=int(port),
     )
 
-
-
-
-
 # ---------------------------
 # Main Web Route
 # ---------------------------
@@ -87,7 +65,6 @@ def index():
 
     offset = (page - 1) * per_page
 
-    # ✅ safer than f-string in SQL
     cursor.execute(
         """
         SELECT * FROM partner_events
