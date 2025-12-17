@@ -6,7 +6,11 @@ import os
 from dotenv import load_dotenv
 
 if os.getenv("APP_ENV") != "prod":
-    load_dotenv(".env.dev")
+    load_dotenv(".env.dev", override=True)
+else:
+    load_dotenv()
+
+
 
 
 
@@ -87,7 +91,7 @@ def index():
     cursor.execute(
         """
         SELECT * FROM partner_events
-        ORDER BY start_date DESC
+        ORDER BY updated_at DESC
         LIMIT %s OFFSET %s
         """,
         (per_page, offset)
@@ -151,7 +155,7 @@ def get_events():
         f"""
         SELECT * FROM partner_events
         {where_clause}
-        ORDER BY start_date DESC
+        ORDER BY updated_at DESC
         LIMIT %s OFFSET %s
         """,
         tuple(params + [per_page, offset])

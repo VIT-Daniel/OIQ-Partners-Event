@@ -280,10 +280,20 @@ def save_to_db(events: list):
     before_count = cursor.fetchone()[0]
 
     insert_query = """
-    INSERT IGNORE INTO partner_events 
+    INSERT INTO partner_events
     (source, category, title, description, start_date, end_date, location, register_link)
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    ON DUPLICATE KEY UPDATE
+    category = VALUES(category),
+    title = VALUES(title),
+    description = VALUES(description),
+    start_date = VALUES(start_date),
+    end_date = VALUES(end_date),
+    location = VALUES(location),
+    register_link = VALUES(register_link),
+    updated_at = CURRENT_TIMESTAMP
     """
+
 
     for e in events:
         cursor.execute(insert_query, (
