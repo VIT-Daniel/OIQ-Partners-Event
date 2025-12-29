@@ -15,6 +15,8 @@ Features:
 ✅ DB support
 ✅ ONLY keeps events with valid registration links (http/https)
 ✅ Normalizes dates for MySQL (fixes ISO timezone dates)
+✅ ONLY keeps upcoming events (today + future)
+✅ Supports NVIDIA date format like 01/11/26 (MM/DD/YY)
 """
 
 import os
@@ -22,7 +24,7 @@ import mysql.connector
 import re
 import requests
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from html import unescape
 
 # ---------------------------
@@ -43,12 +45,12 @@ def has_valid_url(url: str) -> bool:
     return url.startswith("http://") or url.startswith("https://")
 
 # ---------------------------
-# Datetime Helper (NEW)
+# Datetime Helpers
 # ---------------------------
-def to_mysql_datetime(value):
+def parse_datetime(value):
     """
     Converts common date formats (including ISO8601 with timezone offsets)
-    into a MySQL-friendly 'YYYY-MM-DD HH:MM:SS' string.
+    into a Python datetime (naive UTC).
     Returns None if empty/unparseable.
     """
     if value is None:
@@ -58,35 +60,54 @@ def to_mysql_datetime(value):
     if not s:
         return None
 
-    # Normalize Zulu time
+    # Normalize Zulu
     s = s.replace("Z", "+00:00")
 
-    # Try ISO8601 (handles +02:00 offsets)
+    # Try ISO8601 (handles offsets like +02:00)
     try:
-        # Example: 2022-03-15T00:00+02:00
         dt = datetime.fromisoformat(s)
-
-        # If timezone-aware, convert to UTC and strip tzinfo
         if dt.tzinfo is not None:
             dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
+        return dt
     except Exception:
         pass
 
     # Date-only like 2025-12-17
     if len(s) == 10 and s[4] == "-" and s[7] == "-":
-        return f"{s} 00:00:00"
-
-    # Fallback formats
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
         try:
-            dt = datetime.strptime(s, fmt)
-            return dt.strftime("%Y-%m-%d %H:%M:%S")
+            return datetime.strptime(s, "%Y-%m-%d")
+        except Exception:
+            return None
+
+    # Fallback formats (✅ includes NVIDIA style like 01/11/26)
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+        "%m/%d/%y",   # ✅ NVIDIA: 01/11/26
+        "%m/%d/%Y",   # ✅ sometimes full year
+    ):
+        try:
+            return datetime.strptime(s, fmt)
         except ValueError:
             continue
 
     return None
+
+
+def is_upcoming(dt: datetime) -> bool:
+    """Keep only today + future dates. If dt is None -> skip."""
+    if dt is None:
+        return False
+    return dt.date() >= date.today()
+
+
+def to_mysql_datetime(value):
+    """Convert to MySQL 'YYYY-MM-DD HH:MM:SS' string."""
+    dt = parse_datetime(value)
+    if not dt:
+        return None
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 # ---------------------------
 # Database Configuration (UNCHANGED)
@@ -98,7 +119,6 @@ def get_db_connection():
     database = os.getenv("MYSQL_DATABASE") or os.getenv("MYSQLDATABASE")
     port = os.getenv("MYSQLPORT")
 
-    # Password can be empty, others cannot
     missing = [k for k, v in {
         "MYSQLHOST": host,
         "MYSQLUSER": user,
@@ -112,7 +132,7 @@ def get_db_connection():
     return mysql.connector.connect(
         host=host,
         user=user,
-        password=password or "",  # empty password allowed
+        password=password or "",
         database=database,
         port=int(port),
     )
@@ -121,12 +141,11 @@ def get_db_connection():
 # Helper: Clean HTML
 # ---------------------------
 def clean_html(raw_html: str) -> str:
-    """Remove HTML tags and unescape HTML entities from text."""
     if not raw_html:
         return ""
-    clean_text = re.sub(r"<[^>]+>", "", raw_html)  # remove HTML tags
-    clean_text = unescape(clean_text)  # convert &nbsp;, &amp;, etc.
-    clean_text = re.sub(r"\s+", " ", clean_text).strip()  # normalize spaces
+    clean_text = re.sub(r"<[^>]+>", "", raw_html)
+    clean_text = unescape(clean_text)
+    clean_text = re.sub(r"\s+", " ", clean_text).strip()
     return clean_text
 
 # ---------------------------
@@ -139,7 +158,7 @@ def fetch_json(url: str) -> dict:
     return response.json()
 
 # ---------------------------
-# UiPath Parser (valid register_link only)
+# UiPath Parser (valid register_link + upcoming only)
 # ---------------------------
 def parse_uipath(json_data: dict) -> list:
     webinars = []
@@ -164,6 +183,8 @@ def parse_uipath(json_data: dict) -> list:
         print("⚠️ No UiPath 'resourceData' found.")
         return []
 
+    skipped_old = 0
+
     for item in data:
         category = item.get("category") or "Webinar"
 
@@ -179,22 +200,29 @@ def parse_uipath(json_data: dict) -> list:
         if not has_valid_url(register_link):
             continue
 
+        start_raw = item.get("date")
+        start_dt = parse_datetime(start_raw)
+
+        if not is_upcoming(start_dt):
+            skipped_old += 1
+            continue
+
         webinars.append({
             "source": "UiPath",
             "title": item.get("title"),
             "description": clean_html(item.get("teaserBody") or item.get("body")),
-            "start_date": item.get("date"),
+            "start_date": start_raw,
             "end_date": None,
             "location": None,
             "register_link": register_link,
             "category": category
         })
 
-    print(f"✅ Found {len(webinars)} UiPath events (with valid URL).")
+    print(f"✅ Found {len(webinars)} UiPath upcoming events (skipped {skipped_old} old).")
     return webinars
 
 # ---------------------------
-# NVIDIA Parser (valid register_link only)
+# NVIDIA Parser (valid register_link + upcoming only)
 # ---------------------------
 def parse_nvidia(json_data: dict) -> list:
     events = []
@@ -204,6 +232,8 @@ def parse_nvidia(json_data: dict) -> list:
         print("⚠️ No NVIDIA 'events' found.")
         return []
 
+    skipped_old = 0
+
     for item in data:
         category = item.get("type") or "Conference"
         register_link = item.get("url")
@@ -211,22 +241,29 @@ def parse_nvidia(json_data: dict) -> list:
         if not has_valid_url(register_link):
             continue
 
+        start_raw = item.get("startDate")
+        start_dt = parse_datetime(start_raw)
+
+        if not is_upcoming(start_dt):
+            skipped_old += 1
+            continue
+
         events.append({
             "source": "NVIDIA",
             "title": item.get("title"),
             "description": None,
-            "start_date": item.get("startDate"),
+            "start_date": start_raw,
             "end_date": item.get("endDate"),
             "location": item.get("location") or item.get("venue"),
             "register_link": register_link,
             "category": category
         })
 
-    print(f"✅ Found {len(events)} NVIDIA events (with valid URL).")
+    print(f"✅ Found {len(events)} NVIDIA upcoming events (skipped {skipped_old} old).")
     return events
 
 # ---------------------------
-# AWS Parser (valid register_link only)
+# AWS Parser (valid register_link + upcoming only)
 # ---------------------------
 def parse_aws(json_data: dict) -> list:
     events = []
@@ -235,6 +272,9 @@ def parse_aws(json_data: dict) -> list:
     if not items:
         print("⚠️ No AWS 'items' found.")
         return []
+
+    skipped_no_date = 0
+    skipped_old = 0
 
     for i in items:
         item = i.get("item", {})
@@ -246,18 +286,42 @@ def parse_aws(json_data: dict) -> list:
         if not has_valid_url(register_link):
             continue
 
+        possible_dates = [
+            fields.get("startDate"),
+            fields.get("eventDate"),
+            fields.get("date"),
+            item.get("dateCreated"),  # fallback
+        ]
+
+        start_raw = None
+        start_dt = None
+        for d in possible_dates:
+            dt = parse_datetime(d)
+            if dt:
+                start_raw = d
+                start_dt = dt
+                break
+
+        if not start_dt:
+            skipped_no_date += 1
+            continue
+
+        if not is_upcoming(start_dt):
+            skipped_old += 1
+            continue
+
         events.append({
             "source": "AWS",
             "title": fields.get("title"),
             "description": clean_html(fields.get("bodyBack") or fields.get("body")),
-            "start_date": item.get("dateCreated"),
-            "end_date": item.get("dateUpdated"),
+            "start_date": start_raw,
+            "end_date": None,
             "location": None,
             "register_link": register_link,
             "category": category
         })
 
-    print(f"✅ Found {len(events)} AWS events (with valid URL).")
+    print(f"✅ Found {len(events)} AWS upcoming events (skipped {skipped_old} old, {skipped_no_date} missing-date).")
     return events
 
 # ---------------------------
@@ -349,9 +413,9 @@ def write_log(log_data: dict):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_entry = [
         f"\n===== Run Log - {timestamp} =====",
-        f"AWS Events (valid URL): {log_data.get('aws', 0)}",
-        f"NVIDIA Events (valid URL): {log_data.get('nvidia', 0)}",
-        f"UiPath Events (valid URL): {log_data.get('uipath', 0)}",
+        f"AWS Events (upcoming): {log_data.get('aws', 0)}",
+        f"NVIDIA Events (upcoming): {log_data.get('nvidia', 0)}",
+        f"UiPath Events (upcoming): {log_data.get('uipath', 0)}",
         f"Total (after duplicates): {log_data.get('total', 0)}",
         f"🆕 Newly inserted to DB: {log_data.get('inserted_total', 0)}",
         "==============================="
@@ -364,8 +428,12 @@ def write_log(log_data: dict):
 # MAIN SCRIPT
 # ---------------------------
 def main():
-    uipath_url = "https://www.uipath.com/steam-resources/page-data/resources/automation-webinars/page-data.json"
-    nvidia_url = "https://www.nvidia.com/content/dam/en-zz/Solutions/about-nvidia/calendar/en-us.json"
+    # uipath_url = "https://www.uipath.com/steam-resources/page-data/resources/automation-webinars/page-data.json"
+    # nvidia_url = "https://www.nvidia.com/content/dam/en-zz/Solutions/about-nvidia/calendar/en-us.json"
+    # aws_url = "https://aws.amazon.com/api/dirs/items/search?item.directoryId=alias%23events-webinars-interactive-cards&item.locale=en_US&tags.id=%21GLOBAL%23local-tags-events-master-series%23third-party&tags.id=%21GLOBAL%23local-tags-series%23third-party&tags.id=%21GLOBAL%23local-tags-flag%23archived&sort_by=item.dateCreated&sort_order=desc&size=8"
+
+    uipath_url = "https://www.uipath.com/steam-resources/page-data/events/page-data.json"
+    nvidia_url = "https://www.nvidia.com/content/dam/en-zz/Solutions/about-nvidia/calendar/en-us.json?t=1766414224225"
     aws_url = "https://aws.amazon.com/api/dirs/items/search?item.directoryId=alias%23events-webinars-interactive-cards&item.locale=en_US&tags.id=%21GLOBAL%23local-tags-events-master-series%23third-party&tags.id=%21GLOBAL%23local-tags-series%23third-party&tags.id=%21GLOBAL%23local-tags-flag%23archived&sort_by=item.dateCreated&sort_order=desc&size=8"
 
     all_events = []

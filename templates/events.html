@@ -41,6 +41,13 @@
       border-radius: 8px;
     }
 
+    /* ✅ NEW: Header auth buttons */
+    .header-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
     .card {
       height: 100%;
       display: flex;
@@ -82,14 +89,26 @@
 </head>
 
 <body>
-  <!-- 🌐 Header -->
+
   <header>
-    <a href="/" class="brand">
-      <!-- ✅ Updated to use your actual logo -->
-      <img src="{{ url_for('static', filename='image/vit.png') }}" alt="VIT Logo" />
-      <span>VIT Partner Events</span>
-    </a>
-  </header>
+  <a href="/" class="brand">
+    <img src="{{ url_for('static', filename='image/vit.png') }}" alt="VIT Logo" />
+    <span>VIT Partner Events</span>
+  </a>
+
+  <div class="header-actions">
+    {% if current_user.is_authenticated %}
+      <a href="/events/new" class="btn btn-primary btn-sm">Add Event</a>
+      <a href="/logout" class="btn btn-outline-secondary btn-sm">Logout</a>
+    {% else %}
+      <a href="/login" class="btn btn-outline-primary btn-sm">Login</a>
+      <!-- ✅ Register removed add the register button here-->
+    {% endif %}
+  </div>
+</header>
+
+
+
 
   <!-- 💡 Main Container -->
   <div class="container py-5">
